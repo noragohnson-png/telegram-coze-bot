@@ -15,35 +15,58 @@ function sleep(ms) {
 
 
 // ===============================
+// معرفة صاحب حساب Business
+// ===============================
+
+async function getBusinessOwnerId(businessConnectionId) {
+  const response = await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getBusinessConnection?business_connection_id=${encodeURIComponent(businessConnectionId)}`
+  );
+
+  const data = await response.json();
+
+  if (!data.ok) {
+    throw new Error(
+      `Telegram Business error: ${data.description}`
+    );
+  }
+
+  return data.result?.user?.id;
+}
+
+
+// ===============================
 // Coze
 // ===============================
 
 async function askCoze(text, userId) {
-  const response = await fetch("https://api.coze.com/v3/chat", {
-    method: "POST",
 
-    headers: {
-      "Authorization": `Bearer ${COZE_TOKEN}`,
-      "Content-Type": "application/json"
-    },
+  const response = await fetch(
+    "https://api.coze.com/v3/chat",
+    {
+      method: "POST",
 
-    body: JSON.stringify({
-      bot_id: COZE_BOT_ID,
-      user_id: String(userId),
+      headers: {
+        "Authorization": `Bearer ${COZE_TOKEN}`,
+        "Content-Type": "application/json"
+      },
 
-      stream: false,
+      body: JSON.stringify({
+        bot_id: COZE_BOT_ID,
+        user_id: String(userId),
+        stream: false,
+        auto_save_history: true,
 
-      auto_save_history: true,
-
-      additional_messages: [
-        {
-          role: "user",
-          content: text,
-          content_type: "text"
-        }
-      ]
-    })
-  });
+        additional_messages: [
+          {
+            role: "user",
+            content: text,
+            content_type: "text"
+          }
+        ]
+      })
+    }
+  );
 
   const data = await response.json();
 
@@ -57,7 +80,7 @@ async function askCoze(text, userId) {
   const conversationId = data.data.conversation_id;
 
 
-  // انتظار انتهاء رد Coze
+  // انتظار انتهاء Coze
   for (let i = 0; i < 30; i++) {
 
     await sleep(1000);
@@ -76,18 +99,18 @@ async function askCoze(text, userId) {
 
     const status = statusData?.data?.status;
 
-
     if (status === "completed") {
       break;
     }
 
-
-    if (status === "failed" || status === "canceled") {
+    if (
+      status === "failed" ||
+      status === "canceled"
+    ) {
       throw new Error(
         `Coze chat status: ${status}`
       );
     }
-
 
     if (i === 29) {
       throw new Error(
@@ -97,7 +120,7 @@ async function askCoze(text, userId) {
   }
 
 
-  // جلب الرسائل
+  // جلب الرد
   const messagesResponse = await fetch(
     `https://api.coze.com/v3/chat/message/list?chat_id=${encodeURIComponent(chatId)}&conversation_id=${encodeURIComponent(conversationId)}`,
 
@@ -108,12 +131,10 @@ async function askCoze(text, userId) {
     }
   );
 
-
   const messagesData =
     await messagesResponse.json();
 
 
-  // البحث عن رد البوت
   const answer =
     messagesData?.data?.find(
       message =>
@@ -128,14 +149,12 @@ async function askCoze(text, userId) {
     );
   }
 
-
   return answer.content;
 }
 
 
-
 // ===============================
-// Telegram
+// إرسال رسالة Telegram
 // ===============================
 
 async function sendTelegramMessage(
@@ -149,13 +168,10 @@ async function sendTelegramMessage(
     text: text
   };
 
-
-  // إذا كانت رسالة Business
   if (businessConnectionId) {
     body.business_connection_id =
       businessConnectionId;
   }
-
 
   const response = await fetch(
     `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
@@ -171,23 +187,16 @@ async function sendTelegramMessage(
     }
   );
 
-
-  const data =
-    await response.json();
-
+  const data = await response.json();
 
   if (!data.ok) {
-
     throw new Error(
       `Telegram error: ${data.description}`
     );
-
   }
-
 
   return data;
 }
-
 
 
 // ===============================
@@ -195,13 +204,10 @@ async function sendTelegramMessage(
 // ===============================
 
 app.get("/", (req, res) => {
-
   res.send(
     "Telegram + Coze server is running!"
   );
-
 });
-
 
 
 // ===============================
@@ -210,41 +216,22 @@ app.get("/", (req, res) => {
 
 app.post("/webhook", async (req, res) => {
 
-  // نخبر Telegram مباشرة أن الطلب وصل
+  // نخبر Telegram أن الطلب وصل
   res.sendStatus(200);
-
 
   try {
 
     const update = req.body;
 
 
-
     // =================================
-    // Telegram Business message
+    // Business message
     // =================================
 
     if (update.business_message) {
 
       const msg =
         update.business_message;
-
-
-      // =================================
-      // مهم جداً:
-      // تجاهل رسائل البوت نفسه
-      // =================================
-
-      if (msg.sender_business_bot) {
-
-        console.log(
-          "Ignoring bot's own Business message"
-        );
-
-        return;
-      }
-
-
 
       const text =
         msg.text;
@@ -256,24 +243,73 @@ app.post("/webhook", async (req, res) => {
         msg.business_connection_id;
 
 
-
-      // التأكد من وجود البيانات
       if (
         !text ||
         !chatId ||
         !businessConnectionId
       ) {
+        return;
+      }
+
+
+      // =================================
+      // معرفة صاحب حساب الـBusiness
+      // =================================
+
+      const businessOwnerId =
+        await getBusinessOwnerId(
+          businessConnectionId
+        );
+
+
+      console.log(
+        "Business message from:",
+        msg.from?.id
+      );
+
+      console.log(
+        "Business owner ID:",
+        businessOwnerId
+      );
+
+
+      // =================================
+      // تجاهل رسائل صاحب الحساب
+      // =================================
+
+      if (
+        msg.from?.id &&
+        businessOwnerId &&
+        String(msg.from.id) ===
+          String(businessOwnerId)
+      ) {
+
+        console.log(
+          "Ignoring business owner's message"
+        );
 
         return;
       }
 
 
+      // =================================
+      // تجاهل رسائل البوت نفسه
+      // =================================
+
+      if (msg.sender_business_bot) {
+
+        console.log(
+          "Ignoring bot's own message"
+        );
+
+        return;
+      }
+
 
       console.log(
-        "Business message:",
+        "Customer message:",
         text
       );
-
 
 
       // إرسال الرسالة إلى Coze
@@ -284,8 +320,7 @@ app.post("/webhook", async (req, res) => {
         );
 
 
-
-      // إرسال جواب Coze إلى العميل
+      // إرسال الرد للعميل
       await sendTelegramMessage(
         chatId,
         answer,
@@ -297,10 +332,8 @@ app.post("/webhook", async (req, res) => {
         "Business reply sent"
       );
 
-
       return;
     }
-
 
 
     // =================================
@@ -312,7 +345,6 @@ app.post("/webhook", async (req, res) => {
       const msg =
         update.message;
 
-
       const text =
         msg.text;
 
@@ -320,16 +352,9 @@ app.post("/webhook", async (req, res) => {
         msg.chat?.id;
 
 
-
-      // التأكد من وجود البيانات
-      if (
-        !text ||
-        !chatId
-      ) {
-
+      if (!text || !chatId) {
         return;
       }
-
 
 
       console.log(
@@ -338,8 +363,6 @@ app.post("/webhook", async (req, res) => {
       );
 
 
-
-      // إرسال إلى Coze
       const answer =
         await askCoze(
           text,
@@ -347,8 +370,6 @@ app.post("/webhook", async (req, res) => {
         );
 
 
-
-      // إرسال الرد إلى Telegram
       await sendTelegramMessage(
         chatId,
         answer
@@ -358,7 +379,6 @@ app.post("/webhook", async (req, res) => {
       console.log(
         "Normal reply sent"
       );
-
     }
 
 
@@ -370,9 +390,7 @@ app.post("/webhook", async (req, res) => {
     );
 
   }
-
 });
-
 
 
 // ===============================
